@@ -1,15 +1,10 @@
 # %%
-import import_ipynb
 import numpy as np
-import pandas as pd
 import itertools
 
-from os import listdir, mkdir, stat
+from os import stat
 
 from scipy.signal import fftconvolve, convolve2d
-
-import matplotlib.pyplot as plt
-from matplotlib.colors import SymLogNorm as lognorm
 
 from astropy.io import fits
 from astropy.wcs import WCS
@@ -203,16 +198,16 @@ class Observation:
             temp_out = data-conv
             #ERRORMAP CALCULATION
             if thresh_max != 0:
-                sig = sigma(mode, i)
+                sig = ((wavelet(i)**2).sum())**0.5
                 bkg = fftconvolve(data_bkg, wavelet(i),mode='same')
                 bkg[bkg<0] = 0
                 # err = (1+np.sqrt(bkg/sig**2 + 0.75))*sig**3
                 err = (1+np.sqrt(bkg+0.75))*sig
-                significant = (np.abs(temp_out)> thresh_max*err)[size:2*size,size:2*size]
-                # significant = (temp_out > thresh_max*err)[size:2*size,size:2*size]
+                # significant = (np.abs(temp_out)> thresh_max*err)[size:2*size,size:2*size]
+                significant = (temp_out > thresh_max*err)[size:2*size,size:2*size]
                 if thresh_add != 0:
-                    add_significant = (np.abs(temp_out)> thresh_add*err)[size:2*size,size:2*size]
-                    # add_significant = (temp_out > thresh_add*err)[size:2*size,size:2*size]
+                    # add_significant = (np.abs(temp_out)> thresh_add*err)[size:2*size,size:2*size]
+                    add_significant = (temp_out > thresh_add*err)[size:2*size,size:2*size]
                     adj = adjecent(significant)
                     add_condition = np.logical_and(add_significant[adj[0],adj[1]],np.logical_not(significant[adj[0],adj[1]]))
                     while (add_condition).any():
@@ -223,7 +218,6 @@ class Observation:
                         # add_condition = np.logical_and(np.abs(temp_out)[adj[0],adj[1]] >= thresh_add*err[adj[0],adj[1]], np.logical_not(significant)[adj[0],adj[1]])
                 temp_out[size:2*size,size:2*size][np.logical_not(significant)] = 0
             #WRITING THE WAVELET DECOMP LAYER
-            if temp_out[size:2*size,size:2*size].sum() == 0: break
             conv_out[i] = +temp_out[size:2*size,size:2*size]
             conv_out[i][conv_out[i]<0]=0 #leave only positive data to prevent problems while summing layers
             data = conv
