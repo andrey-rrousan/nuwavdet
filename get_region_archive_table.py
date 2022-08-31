@@ -12,16 +12,6 @@ import time
 import os
 warnings.filterwarnings('ignore')
 # %%
-def ellipse(array):
-    grid = np.indices(array.shape)[::-1]
-    center = [((curr_axis*array).sum()/array.sum()) for curr_axis in grid]
-    y,x = np.where(array)
-    return center, np.abs(x-center[0]).max()*2, np.abs(y-center[1]).max()*2
-def mask_ellipse(array):
-    (center_x, center_y), len_x, len_y = ellipse(array)
-    x,y = np.indices(array.shape)[::-1]
-    radius = ((x-center_x)/(0.5*len_x))**2+((y-center_y)/(0.5*len_y))**2
-    return radius <= 1
 def poisson_divider(array):
     sub_arrays = np.zeros((4,180,180))
     for i in range(2):
@@ -109,8 +99,8 @@ def process(argument):
 #%%  
 if __name__ == '__main__':
     start = time.perf_counter()
-    processing = True
-    start_new = True
+    processing = False
+    start_new = False
     group_size = 50
     fits_folder = 'D:\Programms\Jupyter\Science\Source_mask\\\Archive\Processing_v8'
     region_folder = f'{fits_folder}\\Region'

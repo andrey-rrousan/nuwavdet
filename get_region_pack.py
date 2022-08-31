@@ -1,15 +1,10 @@
 # %%
-import import_ipynb
 import numpy as np
-import pandas as pd
 import itertools
 
-from os import listdir, mkdir, stat
+from os import stat
 
 from scipy.signal import fftconvolve, convolve2d
-
-import matplotlib.pyplot as plt
-from matplotlib.colors import SymLogNorm as lognorm
 
 from astropy.io import fits
 from astropy.wcs import WCS
@@ -60,25 +55,12 @@ def atrous(level = 0, resize = False, max_size = 1001):
         return output[(size-1)//2-(max_size-1)//2:(size-1)//2+(max_size-1)//2+1, (size-1)//2-(max_size-1)//2:(size-1)//2+(max_size-1)//2+1]
     return output
 def gauss(level=0, resize=False, max_size = 1000):
-    size = min(5*2**level+1 if not resize else 5*2**(level+1)+1, max_size)
+    size = min(5*2**(level+1)+1, max_size)
     sigma = 2**(level)
-    if sigma < 1:
-        out = np.zeros((size+1,size+1))
-        out[int((size-1)/2)+1][int((size-1)/2)+1] = 1
-        return out
     A = 1/(2*np.pi*sigma**2)**0.5
     x = A*np.exp( (-(np.arange(size)-(size-1)//2)**2)/(2*sigma**2))
     out = np.multiply.outer(x,x)
     return out
-def sigma(mode='atrous',level=0):
-    if mode=='atrous':
-        sigma = [0.8908, 0.20066, 0.08551, 0.04122, 0.02042, 0.0114]
-    elif mode=='gauss':
-        sigma = [0.912579, 0.125101, 0.104892, 4.97810e-02, 2.46556e-02, 1.14364e-02]
-    if level < 6:
-        return sigma[level]
-    else:
-        return sigma[5]/2**(level-5)
 def adjecent(array):
     grid = np.array([
         [1,1,1],
@@ -166,31 +148,10 @@ class Observation:
         self.model = (fits.getdata(f'D:\Programms\Jupyter\Science\Source_mask\Model/det1_fpm{self.det}.cxb.fits',0)
                 *(180/np.pi/10150)**2)[shift:360+shift,shift:360+shift]
         self.exposure = self.header['EXPOSURE']
-    # def get_coeff(self,folder='D:\\Programms\\Jupyter\\Science\\Source_mask\\Archive\\OCC_observations'):
-    #     try:
-    #         # _occ_list = get_link_list('D:\\Programms\\Jupyter\\Science\\Source_mask\\Archive\\OCC_observations')
-    #         _occ_list = get_link_list(folder)
-    #         occ_list = dict()
-    #         for name in _occ_list:
-    #             occ_list[name[name.index('nu'):name.index('02_cl.evt')]] = name
-    #         occ = Observation(occ_list[self.name[:-2]],E_borders=[10,20])
-    #         output = np.zeros((360,360))
-    #         for i in range(2):
-    #             for j in range(2):
-    #                 _temp = occ.data[180*i:180*(i+1),180*j:180*(j+1)].mean()
-    #                 output[180*i:180*(i+1),180*j:180*(j+1)] = _temp if _temp != 0 else 1
-    #     except KeyError:
-    #         output = np.ones((360,360))
-    #     out = output.min()/output
-    #     if np.any(out<0.8):
-    #         return np.ones((360,360))
-    #     else:
-    #         return out    
     def get_coeff(self):
-        # coeff = np.array([0.972,0.895,1.16,1.02]) if self.det=='A' else np.array([0.991,1.047,1.012,0.956])
         coeff = np.array([0.977,0.861,1.163,1.05]) if self.det=='A' else np.array([1.004,0.997,1.025,0.979])
-        test = (coeff).reshape(2,2).repeat(180,0).repeat(180,1)
-        return test
+        resized_coeff = (coeff).reshape(2,2).repeat(180,0).repeat(180,1)
+        return resized_coeff
     def get_data(self, file, E_borders=[3,20]):
         PI_min, PI_max = (np.array(E_borders)-1.6)/0.04
         data = file[1].data.copy()
@@ -215,15 +176,14 @@ class Observation:
                 temp = np.logical_or(temp, np.equal(pixpos_file['rawx'],x)*np.equal(pixpos_file['rawy'],y))
             temp = pixpos_file[temp] 
             output += np.histogram2d(temp['REF_DET1Y'],temp['REF_DET1X'], 360, [[0,360],[0,360]])[0]
-        output = convolve2d(output, kernel, mode='same') >0
+        output = convolve2d(output, kernel, mode='same') > 0
         return output
-    def wavdecomp(self, mode = 'atrous', thresh=False, iteration = 1,occ_coeff = False):
+    def wavdecomp(self, mode = 'atrous', thresh=False,occ_coeff = False):
         #THRESHOLD
         if type(thresh) is int: thresh_max, thresh_add = thresh, thresh/2
         elif type(thresh) is tuple: thresh_max, thresh_add = thresh
-        #INIT BASIC VARIABLES
+        #INIT NEEDED VARIABLES
         wavelet = globals()[mode]
-        # max_level = int(np.ceil(np.log2(self.data.shape[0])))+1
         max_level = 8
         conv_out = np.zeros((max_level+1,self.data.shape[0],self.data.shape[1]))
         size = self.data.shape[0]
@@ -234,36 +194,33 @@ class Observation:
         data_bkg = data.copy()
         #ITERATIVELY CONDUCT WAVLET DECOMPOSITION
         for i in range(max_level):
-            for num_iter in range(iteration):
-                conv = fftconvolve(data,wavelet(i),mode='same')
-                temp_out = data-conv
-                #ERRORMAP CALCULATION
-                if thresh_max != 0:
-                    sig = sigma(mode, i)
-                    bkg = fftconvolve(data_bkg, wavelet(i),mode='same')
-                    bkg[bkg<0] = 0
-                    # err = (1+np.sqrt(bkg/sig**2 + 0.75))*sig**3
-                    err = (1+np.sqrt(bkg+0.75))*sig
-                    significant = (np.abs(temp_out)> thresh_max*err)[size:2*size,size:2*size]
-                    # significant = (temp_out > thresh_max*err)[size:2*size,size:2*size]
-                    if thresh_add != 0:
-                        add_significant = (np.abs(temp_out)> thresh_add*err)[size:2*size,size:2*size]
-                        # add_significant = (temp_out > thresh_add*err)[size:2*size,size:2*size]
+            conv = fftconvolve(data,wavelet(i),mode='same')
+            temp_out = data-conv
+            #ERRORMAP CALCULATION
+            if thresh_max != 0:
+                sig = ((wavelet(i)**2).sum())**0.5
+                bkg = fftconvolve(data_bkg, wavelet(i),mode='same')
+                bkg[bkg<0] = 0
+                # err = (1+np.sqrt(bkg/sig**2 + 0.75))*sig**3
+                err = (1+np.sqrt(bkg+0.75))*sig
+                # significant = (np.abs(temp_out)> thresh_max*err)[size:2*size,size:2*size]
+                significant = (temp_out > thresh_max*err)[size:2*size,size:2*size]
+                if thresh_add != 0:
+                    # add_significant = (np.abs(temp_out)> thresh_add*err)[size:2*size,size:2*size]
+                    add_significant = (temp_out > thresh_add*err)[size:2*size,size:2*size]
+                    adj = adjecent(significant)
+                    add_condition = np.logical_and(add_significant[adj[0],adj[1]],np.logical_not(significant[adj[0],adj[1]]))
+                    while (add_condition).any():
+                        to_add = adj[0][add_condition], adj[1][add_condition] 
+                        significant[to_add[0],to_add[1]] = True
                         adj = adjecent(significant)
                         add_condition = np.logical_and(add_significant[adj[0],adj[1]],np.logical_not(significant[adj[0],adj[1]]))
-                        while (add_condition).any():
-                            to_add = adj[0][add_condition], adj[1][add_condition] 
-                            significant[to_add[0],to_add[1]] = True
-                            adj = adjecent(significant)
-                            add_condition = np.logical_and(add_significant[adj[0],adj[1]],np.logical_not(significant[adj[0],adj[1]]))
-                            # add_condition = np.logical_and(np.abs(temp_out)[adj[0],adj[1]] >= thresh_add*err[adj[0],adj[1]], np.logical_not(significant)[adj[0],adj[1]])
-                    temp_out[size:2*size,size:2*size][np.logical_not(significant)] = 0
-                #WRITING THE WAVELET DECOMP LAYER
-                if temp_out[size:2*size,size:2*size].sum() == 0: break
-                conv_out[i] = +temp_out[size:2*size,size:2*size]
-                conv_out[i][conv_out[i]<0]=0 #leave only positive data to prevent problems while summing layers
-                # conv_out[i] = significant
-                data = conv
+                        # add_condition = np.logical_and(np.abs(temp_out)[adj[0],adj[1]] >= thresh_add*err[adj[0],adj[1]], np.logical_not(significant)[adj[0],adj[1]])
+                temp_out[size:2*size,size:2*size][np.logical_not(significant)] = 0
+            #WRITING THE WAVELET DECOMP LAYER
+            conv_out[i] = +temp_out[size:2*size,size:2*size]
+            conv_out[i][conv_out[i]<0]=0 #leave only positive data to prevent problems while summing layers
+            data = conv
         conv_out[max_level] = conv[size:2*size,size:2*size]
         return conv_out
 # %%
