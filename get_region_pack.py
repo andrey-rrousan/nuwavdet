@@ -34,10 +34,13 @@ def get_wcs(file):
         'NAXIS1': header['TLMAX38'], 'NAXIS2': header['TLMAX39']
     })
     return wcs
-def get_link_list(folder, sort_list=False):
+def get_link_list(folder, sort_list=True):
     links = glob(f'{folder}\\**\\*_cl.evt',recursive=True)
-    sorted_list = sorted(links, key=lambda x: stat(x).st_size) 
-    return np.array(sorted_list)
+    if sort_list:
+        sorted_list = sorted(links, key=lambda x: stat(x).st_size) 
+        return np.array(sorted_list)
+    else:
+        return np.array(links)
 def atrous(level = 0, resize = False, max_size = 1001):
     base = 1/256*np.array([
         [1,  4,  6,  4, 1],
@@ -75,21 +78,15 @@ def adjecent(array):
     output = np.argwhere(output == True)
     return output[:,0], output[:,1]
 def add_borders(array,middle=True):
-        # array_blurred = convolve2d(array,np.ones((5,5)),mode='same')
         mask = np.zeros(array.shape)
         datax, datay = np.any(array>0,0), np.any(array>0,1)
-        # datax, datay = np.any(array_blurred>0,0), np.any(array_blurred>0,1)
         #Add border masks
         x_min, y_min = np.argmax(datax), np.argmax(datay)
         x_max, y_max = len(datax) - np.argmax(datax[::-1]), len(datay) - np.argmax(datay[::-1])
-        # x_mid_min, y_mid_min = x_min+10+np.argmin(datax[x_min+10:]), y_min+10+np.argmin(datay[y_min+10:])
-        # x_mid_max, y_mid_max = x_max-10-np.argmin(datax[x_max-11::-1]), y_max-10-np.argmin(datay[y_max-11::-1])
         mask[y_min:y_max,x_min:x_max] = True
         if middle is True:
             mask[176:191,:] = False
             mask[:,176:191] = False
-            # mask[y_mid_min:y_mid_max,:] = False
-            # mask[:,x_mid_min:x_mid_max] = False
         mask = np.logical_not(mask)
         return mask
 def fill_poisson(array, size_input=32):
@@ -101,7 +98,6 @@ def fill_poisson(array, size_input=32):
     mask = array.mask.copy()
     while mask.sum()>1:
         kernel = np.ones((size,size))/size**2
-        # coeff = fftconvolve(np.logical_not(mask), kernel, mode='same')
         coeff = fftconvolve(np.logical_not(mask),kernel,mode='same')
         mean = fftconvolve(output,kernel,mode='same')
         idx = np.where(np.logical_and(mask,coeff>0.1))
