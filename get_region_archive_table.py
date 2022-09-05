@@ -1,12 +1,11 @@
 # %%
 from get_region_pack import *
 import numpy as np
-import pandas as pd
+from pandas import DataFrame, read_csv
 from astropy.table import Table
 from astropy.coordinates import SkyCoord
 from astropy import units as u
-import multiprocessing
-from multiprocessing import get_context
+from multiprocessing import get_context, cpu_count
 import warnings
 import time
 import os
@@ -98,16 +97,27 @@ def process(argument):
         return obs_name, np.zeros((360,360))
 #%%  
 if __name__ == '__main__':
-    start = time.perf_counter()
-    processing = False
-    start_new = False
-    group_size = 50
-    fits_folder = 'D:\Programms\Jupyter\Science\Source_mask\\\Archive\Processing_v8'
+    #DIALOGUE
+    print('Enter path to the input folder')
+    input_folder = input()
+    obs_list = get_link_list(input_folder,sort_list = True)[:]
+    print('Create new file for this processing? y/n')
+    continue_old = input()
+    if continue_old == 'y':
+        start_new = True
+    elif  continue_old == 'n':
+        start_new = False
+    else:
+        print('Cannot interprete input, closing script')
+        raise SystemExit(0)
+    print(f'Enter path to the output folder')
+    fits_folder = input()
     region_folder = f'{fits_folder}\\Region'
-    if not os.path.exists(fits_folder):
-        os.makedirs(fits_folder)
-        os.makedirs(region_folder)
-    obs_list = get_link_list('E:\\Archive\\0[0-9]\\[0-9]',sort_list = True)[:]
+    #INIT ALL NECESSARY FILES AND VARIBALES
+    start = time.perf_counter()
+    processing = True
+    group_size = 50
+    os.makedirs(region_folder,exist_ok = True)
     #FILTERING BY THE FILE SIZE
     print(f'Finished scanning folders. Found {len(obs_list)} observations.')
     table = {
@@ -115,14 +125,12 @@ if __name__ == '__main__':
         'count_rate':[], 'remaining_area':[], 'poisson_chi2':[], 'poisson_chi2_full':[], 'rms':[]
         }
     if start_new:
-        out_table = pd.DataFrame(table)
+        out_table = DataFrame(table)
         out_table.to_csv(f'{fits_folder}\\test.csv')
-        # out_table.to_csv(f'{fits_folder}\\test_skipped.csv')
-        os.system(f'copy D:\Programms\Jupyter\Science\Source_mask\Archive\Processing_v3\\test_skipped.csv {fits_folder}')
-    #REMOVING PROCESSED OBSERVATIONS
-    # already_processed = fits.getdata(f'{fits_folder}\\test.fits')['obs_name']
-    already_processed_list = pd.read_csv(f'{fits_folder}\\test.csv',index_col=0,dtype={'obs_id':str})
-    already_skipped_list = pd.read_csv(f'{fits_folder}\\test_skipped.csv',index_col=0,dtype={'obs_id':str})
+        out_table.to_csv(f'{fits_folder}\\test_skipped.csv')
+    #FILTERING OUT PROCESSED OBSERVATIONS
+    already_processed_list = read_csv(f'{fits_folder}\\test.csv',index_col=0,dtype={'obs_id':str})
+    already_skipped_list = read_csv(f'{fits_folder}\\test_skipped.csv',index_col=0,dtype={'obs_id':str})
     already_processed = (already_processed_list['obs_id'].astype(str)+already_processed_list['detector']).values
     already_skipped = (already_skipped_list['obs_id'].astype(str)+already_skipped_list['detector']).values
     obs_list_names = [curr[curr.index('nu')+2:curr.index('_cl.evt')-2] for curr in obs_list]
@@ -130,6 +138,7 @@ if __name__ == '__main__':
     not_skipped = np.array([(curr not in already_skipped) for curr in obs_list_names])
     obs_list = obs_list[np.logical_and(not_processed,not_skipped)]
     print(f'Removed already processed observations. {len(obs_list)} observations remain.')
+    #START PROCESSING
     if processing:
         print('Started processing...')
         num = 0
@@ -137,7 +146,7 @@ if __name__ == '__main__':
             print(f'Started group {group_idx}')
             group_list = obs_list[group_size*group_idx:min(group_size*(group_idx+1),len(obs_list))]
             max_size = np.array([stat(file).st_size/2**20 for file in group_list]).max()
-            process_num = 10 if max_size<50 else (5 if max_size<200 else (2 if max_size<1000 else 1))
+            process_num = cpu_count() if max_size<50 else (cpu_count()//2 if max_size<200 else (cpu_count()//4 if max_size<1000 else 1))
             print(f"Max file size in group is {max_size:.2f}Mb, create {process_num} processes")
             with get_context('spawn').Pool(processes=process_num) as pool:
                 for result,region in pool.imap(process,enumerate(group_list)):
@@ -150,17 +159,17 @@ if __name__ == '__main__':
                         table[key] = [value]
                     if table['exposure'][0] < 1000:
                         print(f'{num:>3} {str(result[0])+result[1]} is skipped. Exposure < 1000')
-                        pd.DataFrame(table).to_csv(f'{fits_folder}\\test_skipped.csv',mode='a',header=False)
+                        DataFrame(table).to_csv(f'{fits_folder}\\test_skipped.csv',mode='a',header=False)
                         num +=1
                         continue
-                    pd.DataFrame(table).to_csv(f'{fits_folder}\\test.csv',mode='a',header=False)
+                    DataFrame(table).to_csv(f'{fits_folder}\\test.csv',mode='a',header=False)
                     fits.writeto(f'{region_folder}\\{str(result[0])+result[1]}_region.fits', region, overwrite= True)
                     print(f'{num:>3} {str(result[0])+result[1]} is written.')
                     num +=1
             print('Converting generated csv to fits file...')
-            print(f'Current time in: {time.perf_counter()-start}')
+            print(f'Current time in: {(time.perf_counter()-start):.2f}')
             print(f'Processed {num/len(obs_list)*100:.2f} percent')
-            csv_file = pd.read_csv(f'{fits_folder}\\test.csv',index_col=0,dtype={'obs_id':str})
+            csv_file = read_csv(f'{fits_folder}\\test.csv',index_col=0,dtype={'obs_id':str})
             Table.from_pandas(csv_file).write(f'{fits_folder}\\test.fits',overwrite=True)
         print(f'Finished writing: {time.perf_counter()-start}')
 # %%
