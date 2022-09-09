@@ -1,1 +1,1 @@
-name = 'wavsource_nustar'
+name = 'nuwavsource'
