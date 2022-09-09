@@ -24,20 +24,26 @@ This package is to be used with Python 3.x.x
 
 To install tha package write
 
-`pip install nuwavsource`
+```bash
+pip install nuwavsource
+```
 
 ## Usage
 
 To use the package in your project, import it in by writing
 
-`from nuwavsource import nuwavsource`
+```python
+from nuwavsource import nuwavsource
+```
 
 You can process the cl.evt file by creating an Observation class object:
 
-`obs = nuwavsource.Observation(path_to_evt_file)`
+```python
+obs = nuwavsource.Observation(path_to_evt_file)
+```
 
-Additionally, the energy band to get events from can be passed as an argument:
+Additionally, the energy band in KeV to get events from can be passed as an argument. The default value is [3,20].
 
-`obs = nuwavsource.Observation(path_to_evt_file,E_borders=[E_min,E_max])`
-
-The default value used in the code is [3,20]
+```python
+obs = nuwavsource.Observation(path_to_evt_file,E_borders=[E_min,E_max])
+```
