@@ -14,10 +14,10 @@ Useful data about the observation:
 
 Useful algorythm-related data:
 
-6. average count rate on unmasked area
-7. portion of unmasked area
-8. specific statistical metric[1] before and after masking the detected sources
-9. root-mean-square of counts in unmasked area
+6. Average count rate on unmasked area
+7. Portion of unmasked area
+8. Specific statistical metric[1] before and after masking the detected sources
+9. Root-mean-square of counts in unmasked area
 
 ## Installation
 This package is to be used with Python 3.x.x
