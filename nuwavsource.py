@@ -108,7 +108,6 @@ def fill_poisson(array, size_input=32):
         mask[idx] = False
         size *= 2
     return output
-
 def mirror(array):
     size = array.shape[0]
     output = np.tile(array,(3,3))

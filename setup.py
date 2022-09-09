@@ -4,9 +4,9 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setuptools.setup(
-    name="wavsource_nustar",
+    name="nuwavsource",
     version="1.0.0",
-    author="Andrey_Mukhin",
+    author="Andrey Mukhin",
     author_email="amukhin@phystech.edu",
     description="A package for source exclusion in NuStar observation data using wavelet decomposition",
     long_description=long_description,
@@ -18,4 +18,11 @@ setuptools.setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ),
+    install_requires = [
+        'astropy==5.1',
+        'numpy==1.23.2',
+        'pandas==1.4.4',
+        'scipy==1.9.1',
+        'setuptools==57.4.0',
+    ]
 )
