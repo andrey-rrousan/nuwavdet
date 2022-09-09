@@ -11,7 +11,7 @@ setuptools.setup(
     description="A package for source exclusion in NuStar observation data using wavelet decomposition",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/Andreyousan/wavsource_nustar",
+    url="https://github.com/Andreyousan/nuwavsource",
     packages=setuptools.find_packages(),
     classifiers=(
         "Programming Language :: Python :: 3",
