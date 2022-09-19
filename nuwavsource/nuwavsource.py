@@ -439,8 +439,3 @@ def process_folder(input_folder=None, start_new_file=None, fits_folder=None, thr
         csv_file = read_csv(f'{fits_folder}\\test.csv', index_col=0, dtype={'obs_id': str})
         Table.from_pandas(csv_file).write(f'{fits_folder}\\test.fits', overwrite=True)
     print(f'Finished writing: {perf_counter()-start}')
-
-
-if __name__ == '__main__':
-    process_folder(r'E:\Archive','y','D:\Programms\Jupyter\Science\Source_mask\Archive\Github_v3',(5,3))
-# %%
