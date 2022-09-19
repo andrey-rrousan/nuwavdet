@@ -254,7 +254,11 @@ class Observation:
             test = np.zeros(len(pixpos['REF_DET1X']), dtype=bool)
             for idx, (x, y) in enumerate(zip(pixpos['REF_DET1X'], pixpos['REF_DET1Y'])):
                 test[idx] = np.logical_and(np.equal(x, x_region), np.equal(y, y_region)).any()
-            tables.append(unique(Table({'RAWX': pixpos['RAWX'][test], 'RAWY': pixpos['RAWY'][test]})))
+            table = Table({'RAWX': pixpos['RAWX'][test], 'RAWY': pixpos['RAWY'][test]})
+            if not table:
+                tables.append(table)
+            else:
+                tables.append(unique(table))
         hdu_list = fits.HDUList([
             fits.PrimaryHDU(),
             fits.table_to_hdu(tables[0]),
@@ -278,6 +282,7 @@ def process(args):
         lon, lat = sky_coord.l.value, sky_coord.b.value
         rem_signal, rem_area, poiss_comp, rms = np.zeros((4, 2**bin_num))
         region = np.zeros(obs.data.shape, dtype=bool)
+        region_raw = -1
         rem_region = np.logical_and(region, np.logical_not(obs.data.mask))
         masked_obs = np.ma.masked_array(obs.data, mask=region)
         good_lvl = np.zeros(bin_num, dtype=bool)
@@ -302,9 +307,10 @@ def process(args):
                     good_lvl = lvl
             try:
                 region = wav_obs[2:-1][good_lvl].sum(0) > 0
+                if region.sum() > 0:
+                    region_raw = obs.region_to_raw(region.astype(int))
             except ValueError:
                 region = np.zeros(obs.data.shape, dtype=bool)
-            region_raw = obs.region_to_raw(region.astype(int))
             masked_obs = np.ma.masked_array(obs.data, mask=region)
             rem_region = np.logical_and(region, np.logical_not(obs.data.mask))
             to_table = [obs.obs_id,
@@ -423,7 +429,8 @@ def process_folder(input_folder=None, start_new_file=None, fits_folder=None, thr
                     continue
                 DataFrame(table).to_csv(f'{fits_folder}\\test.csv', mode='a', header=False)
                 fits.writeto(f'{region_folder}\\{str(result[0])+result[1]}_region.fits', region, overwrite=True)
-                fits.writeto(f'{region_raw_folder}\\{str(result[0])+result[1]}_reg_raw.fits', region_raw, overwrite=True)
+                if region_raw != -1:
+                    region_raw.writeto(f'{region_raw_folder}\\{str(result[0])+result[1]}_reg_raw.fits', overwrite=True)
                 print(f'{num:>3} {str(result[0])+result[1]} is written.')
                 num +=1
         print('Converting generated csv to fits file...')
@@ -432,3 +439,8 @@ def process_folder(input_folder=None, start_new_file=None, fits_folder=None, thr
         csv_file = read_csv(f'{fits_folder}\\test.csv', index_col=0, dtype={'obs_id': str})
         Table.from_pandas(csv_file).write(f'{fits_folder}\\test.fits', overwrite=True)
     print(f'Finished writing: {perf_counter()-start}')
+
+
+if __name__ == '__main__':
+    process_folder(r'E:\Archive','y','D:\Programms\Jupyter\Science\Source_mask\Archive\Github_v3',(5,3))
+# %%
