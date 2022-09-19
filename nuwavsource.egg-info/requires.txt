@@ -1,0 +1,5 @@
+astropy==5.1
+numpy==1.23.2
+pandas==1.4.4
+scipy==1.9.1
+setuptools==57.4.0

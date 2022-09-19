@@ -1,0 +1,13 @@
+LICENSE.md
+MANIFEST.in
+README.md
+setup.py
+nuwavsource/__init__.py
+nuwavsource/nuwavsource.py
+nuwavsource.egg-info/PKG-INFO
+nuwavsource.egg-info/SOURCES.txt
+nuwavsource.egg-info/dependency_links.txt
+nuwavsource.egg-info/requires.txt
+nuwavsource.egg-info/top_level.txt
+nuwavsource/pixpos/nuApixpos20100101v007.fits
+nuwavsource/pixpos/nuBpixpos20100101v007.fits
