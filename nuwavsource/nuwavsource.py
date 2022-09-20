@@ -405,6 +405,8 @@ def process_folder(input_folder=None, start_new_file=None, fits_folder=None, thr
     """
     Generates a fits-table of parameters, folder with mask images in DET1 and BADPIX tables in RAW for all observations in given folder.
     Note that observations with exposure < 1000 sec a skipped.
+    start_new_file can be either 'y' or 'n'.
+    thresh must be a tuple, e.g. (5,2).
     """
     # DIALOGUE
     if not (input_folder):
