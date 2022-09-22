@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="nuwavsource",
-    version="0.0.4",
+    version="0.0.5",
     author="Andrey Mukhin",
     author_email="amukhin@phystech.edu",
     description="A package for source exclusion in NuStar observation data using wavelet decomposition",
