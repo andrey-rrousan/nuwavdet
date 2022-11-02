@@ -2,7 +2,7 @@
 import numpy as np
 import itertools
 from pandas import DataFrame, read_csv
-from astropy.table import Table, unique
+from astropy.table import Table
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 from multiprocessing import get_context, cpu_count
@@ -307,25 +307,43 @@ class Observation:
         Returns a hdu_list with positions of masked pixels in RAW coordinates.
         """
         x_region, y_region = np.where(region)
-        tables = []
+        hdus = []
         for i in range(4):
             current_dir = dirname(__file__)
             pixpos = Table(fits.getdata(f'{current_dir}\\pixpos\\nu{self.det}pixpos20100101v007.fits', i+1))
             pixpos = pixpos[pixpos['REF_DET1X'] != -1]
+            
             test = np.zeros(len(pixpos['REF_DET1X']), dtype=bool)
             for idx, (x, y) in enumerate(zip(pixpos['REF_DET1X'], pixpos['REF_DET1Y'])):
                 test[idx] = np.logical_and(np.equal(x, x_region), np.equal(y, y_region)).any()
-            table = Table({'RAWX': pixpos['RAWX'][test], 'RAWY': pixpos['RAWY'][test]})
-            if not table:
-                tables.append(table)
-            else:
-                tables.append(unique(table))
+            
+            positions = np.array((pixpos['RAWX'][test], pixpos['RAWY'][test]))
+            if sum(test) != 0:
+                positions = np.unique(positions, axis=1)
+            rawx, rawy = positions[0], positions[1]
+
+            time_start = float(78913712)
+            bad_flag = np.zeros(16, dtype=bool)
+            bad_flag[13] = 1
+
+            columns = []
+            columns.append(fits.Column('TIME', '1D', 's', array=len(rawx) * [time_start]))
+            columns.append(fits.Column('RAWX', '1B', 'pixel', array=rawx))
+            columns.append(fits.Column('RAWY', '1B', 'pixel', array=rawy))
+            columns.append(fits.Column('BADFLAG', '16X', array=len(rawx) * [bad_flag]))
+
+            hdu = fits.BinTableHDU.from_columns(columns)
+            naxis1, naxis2 = hdu.header['NAXIS1'], hdu.header['NAXIS2']
+            hdu.header = fits.Header.fromtextfile(f'{current_dir}\\badpix_headers\\nu{self.det}userbadpixDET{i}.txt')
+            hdu.header['NAXIS1'] = naxis1
+            hdu.header['NAXIS2'] = naxis2
+            hdus.append(hdu)
+
+        primary_hdu = fits.PrimaryHDU()
+        primary_hdu.header = fits.Header.fromtextfile(f'{current_dir}\\badpix_headers\\nu{self.det}userbadpix_main.txt')
         hdu_list = fits.HDUList([
-            fits.PrimaryHDU(),
-            fits.table_to_hdu(tables[0]),
-            fits.table_to_hdu(tables[1]),
-            fits.table_to_hdu(tables[2]),
-            fits.table_to_hdu(tables[3]),
+            primary_hdu,
+            *hdus
         ])
         return hdu_list
 
