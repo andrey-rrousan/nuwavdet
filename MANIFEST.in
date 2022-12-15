@@ -1,3 +1,2 @@
-include nuwavsource/pixpos/nuApixpos20100101v007.fits
-include nuwavsource/pixpos/nuBpixpos20100101v007.fits
+include nuwavsource/pixpos/*
 include nuwavsource/badpix_headers/*
