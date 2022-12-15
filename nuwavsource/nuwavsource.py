@@ -96,7 +96,8 @@ def atrous(level: int = 0, max_size: int = 1001) -> list[list[float]]:
 
 
 def atrous_sig(level: int = 0) -> float:
-    sig_values = [0.8908, 0.20066, 0.08551, 0.04122, 0.02042]
+    # sig_values = [0.8908, 0.20066, 0.08551, 0.04122, 0.02042]
+    sig_values = [0.8725, 0.1893, 0.0946, 0.0473, 0.0237]
     if level < 5:
         return sig_values[level]
     else:
@@ -172,18 +173,35 @@ def fill_poisson(array, size_input=32):
     return output
 
 
-def mirror(array):
-    """
-    Returns 3 times bigger array with mirrored elements.
-    Original array is located in center.
-    """
-    size = array.shape[0]
-    output = np.tile(array, (3, 3))
-    output[0:size] = np.flipud(output[0:size])
-    output[2*size:3*size] = np.flipud(output[2*size:3*size])
-    output[:, 0:size] = np.fliplr(output[:, 0:size])
-    output[:, 2*size:3*size] = np.fliplr(output[:, 2*size:3*size])
-    return output
+def count_binning(array, count_per_bin: int = 2):
+    _array = (array[array.mask == False]
+              if hasattr(array, 'mask') else array)
+    _array = (_array.flatten()
+              if array.ndim != 1 else _array)
+
+    bin_sum, bin_size = [], []
+    _sum, _count = 0, 0
+
+    for el in _array:
+        _sum += el
+        _count += 1
+        if _sum >= count_per_bin:
+            bin_sum.append(_sum)
+            bin_size.append(_count)
+            _sum, _count = 0, 0
+
+    return np.array(bin_sum), np.array(bin_size)
+
+
+def cstat(expected, data: list, count_per_bin: int = 2) -> float:
+    _data = data.flatten()
+    _data = _data[_data.mask == False]
+    _expected = expected
+    c_stat = 0
+    bin_sum_array, bin_count_array = count_binning(_data, count_per_bin)
+    bin_exp_array = bin_count_array * _expected
+    c_stat = 2 * (bin_exp_array - bin_sum_array + bin_sum_array * (np.log(bin_sum_array / bin_exp_array))).mean()
+    return c_stat
 
 
 class Observation:
@@ -192,18 +210,17 @@ class Observation:
     """
     def __init__(self, file_name, E_borders=[3, 20]):
         self.filename = file_name
-        self.name = file_name[file_name.find('nu'):].replace('_cl.evt','')
+        self.name = file_name[file_name.find('nu'):].replace('_cl.evt', '')
         with fits.open(file_name) as file:
             self.obs_id = file[0].header['OBS_ID']
             self.ra = file[0].header['RA_NOM']
             self.dec = file[0].header['DEC_NOM']
             self.time_start = file[0].header['TSTART']
             self.header = file[0].header
+            self.exposure = self.header['EXPOSURE']
             self.det = self.header['INSTRUME'][-1]
             self.wcs = get_wcs(file)
             self.data = np.ma.masked_array(*self.get_data(file, E_borders))
-            self.hard_mask = add_borders(self.data.data, middle=False)
-        self.exposure = self.header['EXPOSURE']
 
     def get_coeff(self):
         """
@@ -232,23 +249,28 @@ class Observation:
         mask = np.logical_or(mask, self.get_bad_pix(file))
         return output, mask
 
-    def get_bad_pix(self, file):
+    def get_bad_pix(self, file, threshold=0.9):
         """
         Creates a mask for observation based on badpix tables.
         """
-        output = np.zeros((360, 360))
-        kernel = np.ones((5, 5))
-        for i in range(4):
-            current_dir = dirname(__file__)
-            pixpos_file = fits.getdata(f'{current_dir}\\pixpos\\nu{self.det}pixpos20100101v007.fits',i+1)
-            bad_pix_file = file[3+i].data.copy()
-            temp = np.zeros(len(pixpos_file), dtype=bool)
-            for x, y in zip(bad_pix_file['rawx'], bad_pix_file['rawy']):    
-                temp = np.logical_or(temp, np.equal(pixpos_file['rawx'], x)*np.equal(pixpos_file['rawy'], y))
-            temp = pixpos_file[temp] 
-            output += np.histogram2d(temp['REF_DET1Y'], temp['REF_DET1X'], 360, [[0, 360],[0, 360]])[0]
-        output = convolve2d(output, kernel, mode='same') > 0
-        return output
+        current_dir = dirname(__file__)
+        output = np.ones((360, 360))
+        for det_id in range(4):
+            badpix = file[3 + det_id].data
+            badpix_exp = (badpix['TIME_STOP'] - badpix['TIME'])/self.exposure
+            pixpos = np.load(f'{current_dir}\\pixpos\\ref_pix{self.det}{det_id}.npy', allow_pickle=True).item()
+            for raw_x, raw_y, exp in zip(badpix['RAWX'], badpix['RAWY'], badpix_exp):
+                y, x = pixpos[(raw_x, raw_y)]
+                output[x-3:x+11, y-3:y+11] -= exp
+        output = np.clip(output, a_min=0, a_max=None)
+        self.norm_exp_map = output
+        return output < threshold
+
+    def exposure_corr(self, array):
+        corr = 1 - self.norm_exp_map
+        corr[corr > 0.1] = 0.
+        correction_poiss = np.random.poisson(corr*array, corr.shape)
+        return array + correction_poiss
 
     def wavdecomp(self, mode='gauss', thresh=False, occ_coeff=False):
         """
@@ -267,10 +289,11 @@ class Observation:
         )
         size = self.data.shape[0]
         # PREPARE ORIGINAL DATA FOR ANALYSIS: FILL THE HOLES + MIRROR + DETECTOR CORRECTION
+        data = self.exposure_corr(self.data)
         data = fill_poisson(self.data)
         if occ_coeff:
             data = data*self.get_coeff()
-        data = mirror(data)
+        data = np.pad(data, data.shape[0], mode='reflect')
         # ITERATIVELY CONDUCT WAVLET DECOMPOSITION
         for i in range(max_level):
             conv = fftconvolve(data, wavelet(i), mode='same')
@@ -285,16 +308,16 @@ class Observation:
                 bkg = fftconvolve(data, wavelet(i), mode='same')
                 bkg[bkg < 0] = 0
                 err = (1+np.sqrt(bkg+0.75))*sig
-                significant = (np.abs(temp_out) > thresh_max*err)[size:2*size, size:2*size]
+                significant = (temp_out > thresh_max*err)[size:2*size, size:2*size]
                 if thresh_add != 0:
-                    add_significant = (np.abs(temp_out) > thresh_add*err)[size:2*size, size:2*size]
+                    add_significant = (temp_out > thresh_add*err)[size:2*size, size:2*size]
                     adj = adjecent(significant)
                     add_condition = np.logical_and(adj, add_significant)
                     while (add_condition).any():
                         significant = np.logical_or(significant, add_condition)
                         adj = adjecent(significant)
                         add_condition = np.logical_and(adj, add_significant)
-                significant = mirror(significant)
+                significant = np.pad(significant, significant.shape[0], mode='reflect')
                 temp_out[np.logical_not(significant)] = 0
             # WRITING THE WAVELET DECOMP LAYER
             conv_out[i] = +temp_out[size:2*size, size:2*size]
@@ -368,27 +391,33 @@ def process(args):
         good_idx = 0
         if obs.exposure > 1000:
             wav_obs = obs.wavdecomp('atrous', thresh, occ_coeff=True)
-            wav_obs[wav_obs < 0] = 0
             occ_coeff = obs.get_coeff()
-            for idx, lvl in enumerate(binary_array(bin_num)):
+            binary_arr = binary_array(bin_num)
+
+            for idx, lvl in enumerate(binary_arr):
                 try:
                     region = wav_obs[2:-1][lvl].sum(0) > 0
-                    # region = fftconvolve(wav_obs[2:-1][lvl].sum(0)>0, gauss(3),mode='same') > 0.5
                 except ValueError:
                     region = np.zeros(obs.data.shape, dtype=bool)
+
                 masked_obs = np.ma.masked_array(obs.data, mask=region)*occ_coeff
                 rem_region = np.logical_and(region, np.logical_not(obs.data.mask))
                 rem_signal[idx] = 1-obs.data[region].sum()/obs.data.sum()
                 rem_area[idx] = 1 - rem_region.sum()/np.logical_not(obs.data.mask).sum()
-                poiss_comp[idx] = np.mean((masked_obs-masked_obs.mean())**2/masked_obs.mean())
+                poiss_comp[idx] = cstat(masked_obs.mean(), masked_obs)
                 rms[idx] = np.sqrt(((masked_obs-masked_obs.mean())**2).mean())
-                parameter = lambda idx: ((poiss_comp[idx])**2+((1-rem_area[idx])*0.5)**2)
-                if (parameter(idx) < parameter(good_idx)):
+
+            for idx in range(len(poiss_comp)):
+                if ((poiss_comp[idx] < poiss_comp[good_idx]) and
+                    (poiss_comp[idx] < poiss_comp[-1] + 0.05) and
+                    (rem_area[idx] > rem_area[-1])):
                     good_idx = idx
-                    good_lvl = lvl
+            if good_idx == 0:
+                good_idx = len(binary_arr) - 1
+            good_lvl = binary_arr[good_idx]
+
             try:
                 region = wav_obs[2:-1][good_lvl].sum(0) > 0
-                # region = fftconvolve(wav_obs[2:-1][good_lvl].sum(0)>0, gauss(2),mode='same')>0.2
                 if region.sum() > 0:
                     region_raw = obs.region_to_raw(region.astype(int))
             except ValueError:
@@ -474,8 +503,8 @@ def process_folder(input_folder=None, start_new_file=None, fits_folder=None, thr
     table = {
         'obs_id': [], 'detector': [], 'ra': [], 'dec': [],
         'lon': [], 'lat': [], 't_start': [], 'exposure': [],
-        'count_rate': [], 'remaining_area': [], 'poisson_chi2': [],
-        'poisson_chi2_full': [], 'rms': []
+        'count_rate': [], 'remaining_area': [], 'poisson_stat': [],
+        'poisson_stat_full': [], 'rms': []
         }
     if start_new:
         out_table = DataFrame(table)
