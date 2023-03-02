@@ -1,2 +1,3 @@
-include nuwavsource/pixpos/*
-include nuwavsource/badpix_headers/*
+include nuwavdet/pixpos/*
+include nuwavdet/badpix_headers/*
+
