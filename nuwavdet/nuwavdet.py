@@ -1,17 +1,18 @@
-# %%
-import numpy as np
 import itertools
+import numpy as np
+import os
+
 from pandas import DataFrame, read_csv
+from scipy.signal import fftconvolve
+
+from astropy import units as u
 from astropy.table import Table
 from astropy.coordinates import SkyCoord
-from astropy import units as u
-from multiprocessing import get_context, cpu_count
-from time import perf_counter
-from os import stat, makedirs
-from os.path import dirname
-from scipy.signal import fftconvolve, convolve2d
 from astropy.io import fits
 from astropy.wcs import WCS
+
+from time import perf_counter
+from multiprocessing import get_context, cpu_count
 from glob import glob
 from warnings import filterwarnings
 filterwarnings('ignore')
@@ -21,9 +22,9 @@ def get_link_list(folder: str, sort_list: bool = True) -> list[str]:
     """
     Returns array of paths to all *_cl.evt files in the directory recursively. 
     """
-    links = glob(f'{folder}\\**\\*_cl.evt', recursive=True)
+    links = glob(os.path.join(folder, '**', '*_cl.evt'), recursive=True)
     if sort_list:
-        sorted_list = sorted(links, key=lambda x: stat(x).st_size)
+        sorted_list = sorted(links, key=lambda x: os.stat(x).st_size)
         return np.array(sorted_list)
     else:
         return np.array(links)
@@ -152,7 +153,7 @@ def add_borders(array, middle=True):
     return mask
 
 
-def fill_poisson(array, size_input=32):
+def fill_poisson(array, size_input=15):
     """
     Fills all masked elements of an array with poisson signal with local expected value.
     """
@@ -162,14 +163,17 @@ def fill_poisson(array, size_input=32):
     size = size_input
     output = array.data.copy()
     mask = array.mask.copy()
+    mask_full = np.ones(mask.shape)
     while mask.sum() > 1:
         kernel = np.ones((size, size))/size**2
-        coeff = fftconvolve(np.logical_not(mask), kernel, mode='same')
+        coeff_full = fftconvolve(mask_full, kernel, mode='same')
+        coeff = fftconvolve(np.logical_not(mask), kernel, mode='same') / coeff_full
         mean = fftconvolve(output, kernel, mode='same')
-        idx = np.where(np.logical_and(mask, coeff > 0.1))
+        idx = np.where(np.logical_and(mask, coeff > 0.7))
         output[idx] = np.random.poisson(np.abs(mean[idx]/coeff[idx]))
         mask[idx] = False
-        size *= 2
+        size += size_input
+        size += (1 - size % 2)
     return output
 
 
@@ -253,12 +257,12 @@ class Observation:
         """
         Creates a mask for observation based on badpix tables.
         """
-        current_dir = dirname(__file__)
+        current_dir = os.path.dirname(__file__)
         output = np.ones((360, 360))
         for det_id in range(4):
             badpix = file[3 + det_id].data
             badpix_exp = (badpix['TIME_STOP'] - badpix['TIME'])/self.exposure
-            pixpos = np.load(f'{current_dir}\\pixpos\\ref_pix{self.det}{det_id}.npy', allow_pickle=True).item()
+            pixpos = np.load(os.path.join(current_dir, 'pixpos', f'ref_pix{self.det}{det_id}.npy'), allow_pickle=True).item()
             for raw_x, raw_y, exp in zip(badpix['RAWX'], badpix['RAWY'], badpix_exp):
                 y, x = pixpos[(raw_x, raw_y)]
                 output[x-3:x+11, y-3:y+11] -= exp
@@ -301,10 +305,7 @@ class Observation:
             temp_out = data-conv
             # ERRORMAP CALCULATION
             if thresh_max != 0:
-                if mode == 'gauss':
-                    sig = ((wavelet(i)**2).sum())**0.5
-                if mode == 'atrous':
-                    sig = atrous_sig(i)
+                sig = atrous_sig(i)
                 bkg = fftconvolve(data, wavelet(i), mode='same')
                 bkg[bkg < 0] = 0
                 err = (1+np.sqrt(bkg+0.75))*sig
@@ -332,16 +333,16 @@ class Observation:
         x_region, y_region = np.where(region)
         hdus = []
         for i in range(4):
-            current_dir = dirname(__file__)
-            pixpos = Table(fits.getdata(f'{current_dir}\\pixpos\\nu{self.det}pixpos20100101v007.fits', i+1))
+            current_dir = os.path.dirname(__file__)
+            pixpos = Table(fits.getdata(os.path.join(current_dir, 'pixpos', f'nu{self.det}pixpos20100101v007.fits'), i+1))
             pixpos = pixpos[pixpos['REF_DET1X'] != -1]
             
-            test = np.zeros(len(pixpos['REF_DET1X']), dtype=bool)
+            ref_condition = np.zeros(len(pixpos['REF_DET1X']), dtype=bool)
             for idx, (x, y) in enumerate(zip(pixpos['REF_DET1X'], pixpos['REF_DET1Y'])):
-                test[idx] = np.logical_and(np.equal(x, x_region), np.equal(y, y_region)).any()
+                ref_condition[idx] = np.logical_and(np.equal(x, x_region), np.equal(y, y_region)).any()
             
-            positions = np.array((pixpos['RAWX'][test], pixpos['RAWY'][test]))
-            if sum(test) != 0:
+            positions = np.array((pixpos['RAWX'][ref_condition], pixpos['RAWY'][ref_condition]))
+            if sum(ref_condition) != 0:
                 positions = np.unique(positions, axis=1)
             rawx, rawy = positions[0], positions[1]
 
@@ -357,13 +358,13 @@ class Observation:
 
             hdu = fits.BinTableHDU.from_columns(columns)
             naxis1, naxis2 = hdu.header['NAXIS1'], hdu.header['NAXIS2']
-            hdu.header = fits.Header.fromtextfile(f'{current_dir}\\badpix_headers\\nu{self.det}userbadpixDET{i}.txt')
+            hdu.header = fits.Header.fromtextfile(os.path.join(current_dir, 'badpix_headers', f'nu{self.det}userbadpixDET{i}.txt'))
             hdu.header['NAXIS1'] = naxis1
             hdu.header['NAXIS2'] = naxis2
             hdus.append(hdu)
 
         primary_hdu = fits.PrimaryHDU()
-        primary_hdu.header = fits.Header.fromtextfile(f'{current_dir}\\badpix_headers\\nu{self.det}userbadpix_main.txt')
+        primary_hdu.header = fits.Header.fromtextfile(os.path.join(current_dir, 'badpix_headers', f'nu{self.det}userbadpix_main.txt'))
         hdu_list = fits.HDUList([
             primary_hdu,
             *hdus
@@ -371,16 +372,38 @@ class Observation:
         return hdu_list
 
 
-def process(args):
+def save_region(region, path, overwrite=False):
     """
-    Creates a mask using wavelet decomposition and produces some statistical and metadata about the passed observation.
-    args must contain two arguments: path to the file of interest and threshold, e.g. ('D:\Data\obs_cl.evt',(5,2)) 
+    Converts region from numpy mask notation (1 for masked, 0 otherwise)
+    to standart notation (0 for masked, 1 otherwise).
+    Saves the region as fits file according to given path.
     """
-    obs_path, thresh = args
+    fits.writeto(f'{path}',
+                 np.logical_not(region).astype(int),
+                 overwrite=overwrite)
+
+
+def process(obs_path, thresh):
+    """
+    Creates a mask using wavelet decomposition and produces some stats
+    and metadata about the passed observation.
+    Arguments: path to the file of interest and threshold,
+    e.g. process('D:\\Data\\obs_cl.evt', (3, 2))
+    """
     bin_num = 6
+
+    table = {
+        'obs_id': [], 'detector': [], 'ra': [], 'dec': [],
+        'lon': [], 'lat': [], 't_start': [], 'exposure': [],
+        'count_rate': [], 'remaining_area': [], 'cash_stat': [],
+        'cash_stat_full': []
+    }
+
     try:
         obs = Observation(obs_path)
-        sky_coord = SkyCoord(ra=obs.ra*u.deg, dec=obs.dec*u.deg, frame='fk5').transform_to('galactic')
+        sky_coord = SkyCoord(ra=obs.ra*u.deg,
+                             dec=obs.dec*u.deg,
+                             frame='fk5').transform_to('galactic')
         lon, lat = sky_coord.l.value, sky_coord.b.value
         rem_signal, rem_area, poiss_comp, rms = np.zeros((4, 2**bin_num))
         region = np.zeros(obs.data.shape, dtype=bool)
@@ -391,6 +414,7 @@ def process(args):
         good_idx = 0
         if obs.exposure > 1000:
             wav_obs = obs.wavdecomp('atrous', thresh, occ_coeff=True)
+            wav_sum = wav_obs[2:-1].sum(0)
             occ_coeff = obs.get_coeff()
             binary_arr = binary_array(bin_num)
 
@@ -400,10 +424,12 @@ def process(args):
                 except ValueError:
                     region = np.zeros(obs.data.shape, dtype=bool)
 
-                masked_obs = np.ma.masked_array(obs.data, mask=region)*occ_coeff
-                rem_region = np.logical_and(region, np.logical_not(obs.data.mask))
+                masked_obs = np.ma.masked_array(obs.data,
+                                                mask=region) * occ_coeff
+                rem_region = np.logical_and(region,
+                                            np.logical_not(obs.data.mask))
                 rem_signal[idx] = 1-obs.data[region].sum()/obs.data.sum()
-                rem_area[idx] = 1 - rem_region.sum()/np.logical_not(obs.data.mask).sum()
+                rem_area[idx] = 1 - rem_region.sum() / np.logical_not(obs.data.mask).sum()
                 poiss_comp[idx] = cstat(masked_obs.mean(), masked_obs)
                 rms[idx] = np.sqrt(((masked_obs-masked_obs.mean())**2).mean())
 
@@ -418,12 +444,13 @@ def process(args):
 
             try:
                 region = wav_obs[2:-1][good_lvl].sum(0) > 0
-                if region.sum() > 0:
-                    region_raw = obs.region_to_raw(region.astype(int))
+                region_raw = obs.region_to_raw(region.astype(int))
             except ValueError:
                 region = np.zeros(obs.data.shape, dtype=bool)
+                region_raw = obs.region_to_raw(region.astype(int))
             masked_obs = np.ma.masked_array(obs.data, mask=region)
             rem_region = np.logical_and(region, np.logical_not(obs.data.mask))
+
             to_table = [obs.obs_id,
                         obs.det,
                         obs.ra,
@@ -436,9 +463,10 @@ def process(args):
                         1 - rem_region.sum()/np.logical_not(obs.data.mask).sum(),  # rem_area
                         poiss_comp[good_idx],
                         poiss_comp[0],
-                        rms[good_idx]
                         ]
+
         else:
+            wav_sum = np.zeros((360, 360))
             to_table = [obs.obs_id,
                         obs.det,
                         obs.ra,
@@ -452,16 +480,24 @@ def process(args):
                         -1,  # rem_area
                         -1,
                         -1,
-                        -1
                         ]
-        return to_table, region.astype(int), region_raw
+
+        for key, value in zip(table.keys(), to_table):
+            table[key] = [value]
+        return table, region.astype(int), region_raw, wav_sum
     except TypeError:
-        return obs_path, -1, -1
+        return obs_path, -1, -1, -1
 
 
-def process_folder(input_folder=None, start_new_file=None, fits_folder=None, thresh=None):
+def _process_multi(args):
+    return process(*args)
+
+
+def process_folder(input_folder=None, start_new_file=None, fits_folder=None,
+                   thresh=None):
     """
-    Generates a fits-table of parameters, folder with mask images in DET1 and BADPIX tables in RAW for all observations in given folder.
+    Generates a fits-table of parameters, folder with mask images in DET1 and
+    BADPIX tables in RAW for all observations in given folder.
     Note that observations with exposure < 1000 sec a skipped.
     start_new_file can be either 'y' or 'n'.
     thresh must be a tuple, e.g. (5,2).
@@ -481,10 +517,13 @@ def process_folder(input_folder=None, start_new_file=None, fits_folder=None, thr
         print('Cannot interprete input, closing script')
         raise SystemExit(0)
     if not (fits_folder):
-        print(f'Enter path to the output folder')
+        print('Enter path to the output folder')
         fits_folder = input()
-    region_folder = f'{fits_folder}\\Region'
-    region_raw_folder = f'{fits_folder}\\Region_raw'
+    
+    region_folder = os.path.join(fits_folder, 'Region')
+    region_raw_folder = os.path.join(fits_folder, 'Region_raw')
+    wav_sum_folder = os.path.join(fits_folder, 'Wav_sum')
+
     if not thresh:
         print('Enter threshold values for wavelet decomposition:')
         print('General threshold:')
@@ -496,31 +535,29 @@ def process_folder(input_folder=None, start_new_file=None, fits_folder=None, thr
     obs_list = get_link_list(input_folder, sort_list=True)
     start = perf_counter()
     group_size = 50
-    makedirs(region_folder, exist_ok=True)
-    makedirs(region_raw_folder, exist_ok=True)
+    os.makedirs(region_folder, exist_ok=True)
+    os.makedirs(region_raw_folder, exist_ok=True)
+    os.makedirs(wav_sum_folder, exist_ok=True)
     # FILTERING BY THE FILE SIZE
     print(f'Finished scanning folders. Found {len(obs_list)} observations.')
     table = {
         'obs_id': [], 'detector': [], 'ra': [], 'dec': [],
         'lon': [], 'lat': [], 't_start': [], 'exposure': [],
-        'count_rate': [], 'remaining_area': [], 'poisson_stat': [],
-        'poisson_stat_full': [], 'rms': []
+        'count_rate': [], 'remaining_area': [], 'cash_stat': [],
+        'cash_stat_full': []
         }
     if start_new:
         out_table = DataFrame(table)
-        out_table.to_csv(f'{fits_folder}\\test.csv')
-        out_table.to_csv(f'{fits_folder}\\test_skipped.csv')
+        out_table.to_csv(os.path.join(fits_folder, 'overview.csv'))
+        out_table.to_csv(os.path.join(fits_folder, 'overview_skipped.csv'))
     # FILTERING OUT PROCESSED OBSERVATIONS
     already_processed_list = read_csv(
-        f'{fits_folder}\\test.csv',
-        index_col=0,
-        dtype={'obs_id': str}
+        os.path.join(fits_folder, 'overview.csv'), index_col=0, dtype={'obs_id': str}
     )
     already_skipped_list = read_csv(
-        f'{fits_folder}\\test_skipped.csv',
-        index_col=0,
-        dtype={'obs_id': str}
+        os.path.join(fits_folder, 'overview_skipped.csv'), index_col=0, dtype={'obs_id': str}
     )
+
     already_processed = (
         already_processed_list['obs_id'].astype(str) +
         already_processed_list['detector']
@@ -529,6 +566,7 @@ def process_folder(input_folder=None, start_new_file=None, fits_folder=None, thr
         already_skipped_list['obs_id'].astype(str) +
         already_skipped_list['detector']
     ).values
+
     obs_list_names = [
         curr[curr.index('nu')+2:curr.index('_cl.evt')-2]
         for curr in obs_list
@@ -541,8 +579,10 @@ def process_folder(input_folder=None, start_new_file=None, fits_folder=None, thr
         (curr not in already_skipped)
         for curr in obs_list_names
     ])
+
     obs_list = obs_list[np.logical_and(not_processed, not_skipped)]
-    print(f'Removed already processed observations. {len(obs_list)} observations remain.')
+    print('Removed already processed observations.',
+          f'{len(obs_list)} observations remain.')
     # START PROCESSING
     print('Started processing...')
     num = 0
@@ -550,35 +590,37 @@ def process_folder(input_folder=None, start_new_file=None, fits_folder=None, thr
         print(f'Started group {group_idx}')
         group_list = obs_list[group_size*group_idx:min(group_size*(group_idx+1), len(obs_list))]
         max_size = np.array([
-            stat(file).st_size/2**20
+            os.stat(file).st_size/2**20
             for file in group_list
         ]).max()
         process_num = (cpu_count() if max_size < 50 else (cpu_count()//2 if max_size < 200 else (cpu_count()//4 if max_size < 1000 else 1)))
         print(f"Max file size in group is {max_size:.2f}Mb, create {process_num} processes")
         with get_context('spawn').Pool(processes=process_num) as pool:
             packed_args = map(lambda _: (_, thresh), group_list)
-            for result, region, region_raw in pool.imap(process, packed_args):
+            for result, region, region_raw, wav_sum in pool.imap(_process_multi, packed_args):
                 if type(result) is np.str_:
                     obs_id = result[result.index('nu'):result.index('_cl.evt')]
                     print(f'{num:>3} is skipped. File {obs_id}')
                     num += 1
                     continue
-                for key, value in zip(table.keys(), result):
-                    table[key] = [value]
-                if table['exposure'][0] < 1000:
-                    print(f'{num:>3} {str(result[0])+result[1]} is skipped. Exposure < 1000')
-                    DataFrame(table).to_csv(f'{fits_folder}\\test_skipped.csv', mode='a', header=False)
-                    num +=1
+
+                obs_name = str(result['obs_id'][0])+result['detector'][0]
+                if result['exposure'][0] < 1000:
+                    print(f'{num:>3} {obs_name} is skipped. Exposure < 1000')
+                    DataFrame(result).to_csv(os.path.join(fits_folder, 'overview_skipped.csv'), mode='a', header=False)
+                    num += 1
                     continue
-                DataFrame(table).to_csv(f'{fits_folder}\\test.csv', mode='a', header=False)
-                fits.writeto(f'{region_folder}\\{str(result[0])+result[1]}_region.fits', region, overwrite=True)
-                if region_raw != -1:
-                    region_raw.writeto(f'{region_raw_folder}\\{str(result[0])+result[1]}_reg_raw.fits', overwrite=True)
-                print(f'{num:>3} {str(result[0])+result[1]} is written.')
-                num +=1
+
+                DataFrame(result).to_csv(os.path.join(fits_folder, 'overview.csv'), mode='a', header=False)
+                save_region(region, os.path.join(region_folder, f'{obs_name}_region.fits'), overwrite=True)
+                region_raw.writeto(os.path.join(region_raw_folder, f'{obs_name}_reg_raw.fits'), overwrite=True)
+                fits.writeto(os.path.join(wav_sum_folder, f'{obs_name}_wav_sum.fits'), wav_sum, overwrite=True)
+
+                print(f'{num:>3} {obs_name} is written.')
+                num += 1
         print('Converting generated csv to fits file...')
         print(f'Current time in: {(perf_counter()-start):.2f}')
         print(f'Processed {num/len(obs_list)*100:.2f} percent')
-        csv_file = read_csv(f'{fits_folder}\\test.csv', index_col=0, dtype={'obs_id': str})
-        Table.from_pandas(csv_file).write(f'{fits_folder}\\test.fits', overwrite=True)
+        csv_file = read_csv(os.path.join(fits_folder, 'overview.csv'), index_col=0, dtype={'obs_id': str})
+        Table.from_pandas(csv_file).write(os.path.join(fits_folder, 'overview.fits'), overwrite=True)
     print(f'Finished writing: {perf_counter()-start}')
