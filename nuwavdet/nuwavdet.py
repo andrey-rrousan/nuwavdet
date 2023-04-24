@@ -235,7 +235,7 @@ class Observation:
         resized_coeff = (coeff).reshape(2, 2).repeat(180, 0).repeat(180, 1)
         return resized_coeff
 
-    def get_data(self, file, E_borders=[3, 20]):
+    def get_data(self, file, E_borders=[3, 20], generate_mask=True):
         """
         Returns masked array with DET1 image data for given energy band.
         Mask is created from observations badpix tables and to mask the border and gaps. 
@@ -248,10 +248,12 @@ class Observation:
         data_mask = data[np.logical_not(idx_mask)]
         build_hist = lambda array: np.histogram2d(array['DET1Y'], array['DET1X'], 360, [[0, 360], [0, 360]])[0]
         output = build_hist(data_output)
-        mask = build_hist(data_mask)
-        mask = np.logical_or(mask, add_borders(output))
-        mask = np.logical_or(mask, self.get_bad_pix(file))
-        return output, mask
+        if generate_mask:
+            mask = build_hist(data_mask)
+            mask = np.logical_or(mask, add_borders(output))
+            mask = np.logical_or(mask, self.get_bad_pix(file))
+            return output, mask
+        return output
 
     def get_bad_pix(self, file, threshold=0.9):
         """
@@ -330,7 +332,7 @@ class Observation:
         """
         Returns a hdu_list with positions of masked pixels in RAW coordinates.
         """
-        x_region, y_region = np.where(region)
+        y_region, x_region = np.where(region)
         hdus = []
         for i in range(4):
             current_dir = os.path.dirname(__file__)
