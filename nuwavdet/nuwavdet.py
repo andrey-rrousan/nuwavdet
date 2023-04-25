@@ -413,12 +413,12 @@ def process(obs_path, thresh):
         rem_region = np.logical_and(region, np.logical_not(obs.data.mask))
         masked_obs = np.ma.masked_array(obs.data, mask=region)
         good_lvl = np.zeros(bin_num, dtype=bool)
-        good_idx = 0
         if obs.exposure > 1000:
             wav_obs = obs.wavdecomp('atrous', thresh, occ_coeff=True)
             wav_sum = wav_obs[2:-1].sum(0)
             occ_coeff = obs.get_coeff()
             binary_arr = binary_array(bin_num)
+            good_idx = len(binary_arr) - 1
 
             for idx, lvl in enumerate(binary_arr):
                 try:
@@ -436,12 +436,9 @@ def process(obs_path, thresh):
                 rms[idx] = np.sqrt(((masked_obs-masked_obs.mean())**2).mean())
 
             for idx in range(len(poiss_comp)):
-                if ((poiss_comp[idx] < poiss_comp[good_idx]) and
-                    (poiss_comp[idx] < poiss_comp[-1] + 0.05) and
-                    (rem_area[idx] > rem_area[-1])):
+                if ((poiss_comp[idx] < poiss_comp[-1] + 0.05) and
+                    (rem_area[idx] > rem_area[good_idx])):
                     good_idx = idx
-            if good_idx == 0:
-                good_idx = len(binary_arr) - 1
             good_lvl = binary_arr[good_idx]
 
             try:
